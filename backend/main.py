@@ -15,6 +15,7 @@ from backend.projects import *
 from backend.filesystem import *
 from backend.facts import *
 from backend.security import api_key_middleware
+from backend import task_engine
 
 app = FastAPI()
 app.middleware("http")(api_key_middleware)
@@ -305,3 +306,85 @@ def ask(prompt: str):
     if route == "MEMORY":
         return memory()
     return geai_chat(prompt)
+
+
+# GEAI Task Queue API
+# Mutating operations use POST so they are not accidentally triggered by link previews or crawlers.
+from typing import Any
+from pydantic import BaseModel
+from fastapi import HTTPException, Query
+
+
+class CreateTaskRequest(BaseModel):
+    title: str
+    description: str = ""
+
+
+class CompleteTaskRequest(BaseModel):
+    result: Any = None
+
+
+class FailTaskRequest(BaseModel):
+    error: str
+
+
+@app.post("/tasks")
+def api_create_task(payload: CreateTaskRequest):
+    try:
+        return task_engine.create_task(payload.title, payload.description)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/tasks")
+def api_list_tasks(
+    status: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    try:
+        return {"tasks": task_engine.list_tasks(status=status, limit=limit)}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/tasks/{task_id}")
+def api_get_task(task_id: str):
+    task = task_engine.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="task not found")
+    return task
+
+
+@app.post("/tasks/claim-next")
+def api_claim_next_task():
+    return {"task": task_engine.claim_next_task()}
+
+
+@app.post("/tasks/{task_id}/complete")
+def api_complete_task(task_id: str, payload: CompleteTaskRequest):
+    try:
+        return task_engine.complete_task(task_id, payload.result)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/tasks/{task_id}/fail")
+def api_fail_task(task_id: str, payload: FailTaskRequest):
+    try:
+        return task_engine.fail_task(task_id, payload.error)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/tasks/{task_id}/cancel")
+def api_cancel_task(task_id: str):
+    try:
+        return task_engine.cancel_task(task_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
