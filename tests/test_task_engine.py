@@ -46,8 +46,9 @@ def test_invalid_state_transitions_are_rejected(tmp_path, monkeypatch):
     created = tasks.create_task("Not claimed")
     with pytest.raises(ValueError, match="cannot finish"):
         tasks.complete_task(created["id"], "unexpected")
+    tasks.claim_next_task()
     with pytest.raises(ValueError, match="only queued"):
-        tasks.cancel_task(tasks.create_task("Next")["id"] if False else created["id"])
+        tasks.cancel_task(created["id"])
 
 
 def test_unknown_task_is_rejected(tmp_path, monkeypatch):
